@@ -1,34 +1,26 @@
-from collections import namedtuple
+from collections import namedtuple, deque
+import matplotlib.pyplot as plt
 import sys
 import wave
-from numpy import interp
+import numpy as np
 
 __author__ = 'Nestor Velazquez'
 
 def main():
     wave_obj = wave.open(sys.argv[1], mode='rb')
     try:
-        factor = int(sys.argv[3])
+        factor = sys.argv[3]
     except IndexError:
         factor = None
 
     {
         'invert': invert,
-        'decimate': decimate
+        'decimate': decimate,
+        'shift': shift,
+        'modulate': modulate,
+        'interpolate': interpolate,
+        'alter': alter,
     }.get(sys.argv[2])(wave_obj, factor=factor)
-
-def get_samples(wave_obj):
-    return wave_obj.readframes(
-        wave_obj.getnframes()
-    )
-
-def get_frames(samples):
-    sample_list = list(samples)
-    frame_list = list()
-    for i in range(0, len(sample_list) - 1, 2):
-        frame_list.append(sample_list[i:i+2])
-
-    return frame_list
 
 def get_channel_frames(samples, channel, total_channels):
     sample_list = list(samples)
@@ -59,23 +51,18 @@ def build_sample(channels):
 
     return bytes(sample)
 
-def frames_to_bytes(frame_list):
-    output_samples = list()
-
-    for li in frame_list:
-        for sample in li:
-            output_samples.append(sample)
-
-    return bytes(output_samples)
-
 def invert(wave_obj, **kwargs):
     channels = get_channels(wave_obj)
+    plot_channels = channels
     for channel in channels:
         channel.reverse()
 
     frames = build_sample(channels)
     params = wave_obj.getparams()
     wave_obj.close()
+
+    if '-n' not in sys.argv:
+        plot(plot_channels, channels)
 
     output_wave = wave.open('inverted.wav', 'wb')
     output_wave.setparams(params)
@@ -84,7 +71,7 @@ def invert(wave_obj, **kwargs):
 
 def decimate(wave_obj, **kwargs):
     channels = get_channels(wave_obj)
-    factor = kwargs.get('factor')
+    factor = int(kwargs.get('factor'))
 
     decimated_channels = list()
     j = 0
@@ -94,6 +81,8 @@ def decimate(wave_obj, **kwargs):
             decimated_channels[j].append(channel[i])
         j += 1
 
+    if '-n' not in sys.argv:
+        plot(channels, decimated_channels)
     frames = build_sample(decimated_channels)
     parameters = namedtuple('parameters', ['nchannels', 'sampwidth', 'framerate', 'nframes', 'comptype', 'compname'])
     params = parameters(
@@ -111,8 +100,125 @@ def decimate(wave_obj, **kwargs):
     output_wave.writeframes(frames)
     output_wave.close()
 
-def interpolate(wave_obj, factor):
+def shift(wave_obj, **kwargs):
+    factor = int(kwargs.get('factor'))
     channels = get_channels(wave_obj)
+    plot_channels = channels
+    channel_deques = list()
+
+    for channel in channels:
+        channel_deques.append(deque(channel))
+    for dequ in channel_deques:
+        dequ.rotate(factor)
+    for i in range(len(channels)):
+        channels[i] = list(channel_deques[i])
+
+    if '-n' not in sys.argv:
+        plot(plot_channels, channels)
+
+    frames = build_sample(channels)
+    params = wave_obj.getparams()
+    wave_obj.close()
+    output_wave = wave.open('shifted.wav', 'wb')
+    output_wave.setparams(params)
+    output_wave.writeframes(frames)
+    output_wave.close()
+
+def modulate(wave_obj, **kwargs):
+    factor = float(kwargs.get('factor'))
+    channels = get_channels(wave_obj)
+    out_channels = list()
+
+    for channel in channels:
+        out_channels.append(list())
+        for i in range(len(channel)):
+            out_channels[-1].append(int(channel[i]*factor) % 256)
+
+    if '-n' not in sys.argv:
+        plot(channels, out_channels)
+
+    frames = build_sample(out_channels)
+    params = wave_obj.getparams()
+    wave_obj.close()
+    output_wave = wave.open('modulated.wav', 'wb')
+    output_wave.setparams(params)
+    output_wave.writeframes(frames)
+    output_wave.close()
+
+def interpolate(wave_obj, **kwargs):
+    factor = int(kwargs.get('factor'))
+    channels = get_channels(wave_obj)
+
+    out_channels = list()
+    for channel in channels:
+        out_channels.append([])
+        for i in range(len(channel) - 1):
+            chunk = list(' '*factor)
+            chunk_size = int(abs(channel[i] - channel[i+1])/factor)
+            for j in range(factor):
+                if channel[i] < channel[i+1]:
+                    chunk[j] = channel[i] + (chunk_size * (j + 1))
+                else:
+                    chunk[j] = channel[i] - (chunk_size * (j + 1))
+            out_channels[-1] += chunk
+
+    if '-n' not in sys.argv:
+        plot(channels, out_channels)
+    frames = build_sample(out_channels)
+    parameters = namedtuple('parameters', ['nchannels', 'sampwidth', 'framerate', 'nframes', 'comptype', 'compname'])
+    params = parameters(
+        nchannels=wave_obj.getnchannels(),
+        sampwidth=wave_obj.getsampwidth(),
+        framerate=wave_obj.getframerate()*factor,
+        nframes=len(out_channels[0]),
+        comptype=wave_obj.getcomptype(),
+        compname=wave_obj.getcompname()
+    )
+    wave_obj.close()
+
+    output_wave = wave.open('interpolated.wav', 'wb')
+    output_wave.setparams(params)
+    output_wave.writeframes(frames)
+    output_wave.close()
+
+def alter(wave_obj, **kwargs):
+    factor = float(kwargs.get('factor'))
+
+    frames = wave_obj.readframes(wave_obj.getnframes())
+    parameters = namedtuple('parameters', ['nchannels', 'sampwidth', 'framerate', 'nframes', 'comptype', 'compname'])
+    params = parameters(
+        nchannels=wave_obj.getnchannels(),
+        sampwidth=wave_obj.getsampwidth(),
+        framerate=int(wave_obj.getframerate()*factor),
+        nframes=wave_obj.getnframes(),
+        comptype=wave_obj.getcomptype(),
+        compname=wave_obj.getcompname()
+    )
+    wave_obj.close()
+
+    output_wave = wave.open('altered.wav', 'wb')
+    output_wave.setparams(params)
+    output_wave.writeframes(frames)
+    output_wave.close()
+
+def plot(in_channels, out_channels):
+    colors = ['r', 'g', 'y', 'b', 'c', 'm']
+    i = 0
+    subplot = 221
+    plt.figure(1)
+
+    for channel in in_channels:
+        plt.subplot(subplot)
+        plt.plot(channel, colors[i])
+        i += 1
+        subplot += 1
+    for channel in out_channels:
+        plt.subplot(subplot)
+        plt.plot(channel, colors[i])
+        i += 1
+        subplot += 1
+
+    plt.show()
 
 if __name__ == '__main__':
     main()
