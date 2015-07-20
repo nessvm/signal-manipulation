@@ -2,7 +2,6 @@ from collections import namedtuple, deque
 import matplotlib.pyplot as plt
 import sys
 import wave
-import numpy as np
 
 __author__ = 'Nestor Velazquez'
 
@@ -103,7 +102,7 @@ def decimate(wave_obj, **kwargs):
 def shift(wave_obj, **kwargs):
     factor = int(kwargs.get('factor'))
     channels = get_channels(wave_obj)
-    plot_channels = channels
+    plot_channels = channels.copy()
     channel_deques = list()
 
     for channel in channels:
